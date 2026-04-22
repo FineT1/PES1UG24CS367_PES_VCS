@@ -1,173 +1,172 @@
-# PES-VCS: Version Control System from Scratch
+# PES-VCS: Custom Version Control System
 
-**Student Name:**  RAMITH M R 
-**SRN:**  PES1UG24CS367
-**Repository:** PES1UG24CS367-PES-VCS  
-**Platform:**  Ubuntu 22.04
-
----
-
-## Table of Contents
-
-1. [Phase 1 — Object Storage](#phase-1--object-storage-foundation)
-2. [Phase 2 — Tree Objects](#phase-2--tree-objects)
-3. [Phase 3 — Index (Staging Area)](#phase-3--the-index-staging-area)
-4. [Phase 4 — Commits and History](#phase-4--commits-and-history)
-5. [Phase 5 — Branching and Checkout Analysis](#phase-5--branching-and-checkout-analysis)
-6. [Phase 6 — Garbage Collection Analysis](#phase-6--garbage-collection-analysis)
+**Name:** Ramith M R
+**SRN:** PES1UG24CS367
+**Repository:** PES1UG24CS367-PES-VCS
+**Platform:** Ubuntu 22.04
 
 ---
 
-## Phase 1 — Object Storage Foundation
+## Phase 1 — Object Storage
 
-### What Was Implemented
+### Implementation Details
 
-**`object_write`** — Stores any data blob, tree, or commit object into the content-addressable store:
-- Prepends a type header (`"blob <size>\0"`, `"tree <size>\0"`, or `"commit <size>\0"`)
-- Computes SHA-256 of the full object (header + data) using OpenSSL EVP API
-- Checks for deduplication — if hash already exists, skips writing
-- Creates a shard directory using the first 2 hex characters of the hash
-- Writes atomically using `mkstemp` + `fsync` + `rename` pattern
+In this phase, the main goal was to store data in a structured way using hashing.
 
-**`object_read`** — Retrieves and verifies data from the object store:
-- Reads the file at the hash-derived path
-- Recomputes SHA-256 and compares to the filename to verify integrity
-- Parses the header to extract object type and size
-- Returns only the data portion (after the `\0` separator)
+* **object_write**
 
-### Screenshot 1A — All Phase 1 Tests Passing
+  * Adds a header (`type + size`) before storing data
+  * Computes SHA-256 hash using OpenSSL
+  * Avoids duplicate storage by checking existing hashes
+  * Saves objects in `.pes/objects/XX/...` format
+  * Uses safe write method (temp file + rename)
 
-![Screenshot 1A - test_objects passing](Screenshots/1A.jpeg)
+* **object_read**
 
-### Screenshot 1B — Sharded Object Directory Structure
+  * Reads stored object using its hash
+  * Verifies integrity by recomputing hash
+  * Extracts type and size from header
+  * Returns actual data portion
 
-![Screenshot 1B - find .pes/objects](Screenshots/1B.jpeg)
+### Screenshots
+
+* **1A:** Output of `test_objects` (all tests passing)
+  <img width="968" height="216" alt="Test_object_p1_1" src="https://github.com/user-attachments/assets/a6fadd55-6759-4db7-9f00-3bb5aad17d7d" />
+
+* **1B:** Object storage structure using `find .pes/objects`
+  <img width="954" height="98" alt="Test_tree_p1_2" src="https://github.com/user-attachments/assets/fd3fc849-1ee6-4be1-b69b-511c5d9728b6" />
+
 
 ---
 
 ## Phase 2 — Tree Objects
 
-### What Was Implemented
+### Implementation Details
 
-**`tree_from_index`** — Builds a complete tree hierarchy from the staging area:
-- Reads `.pes/index` directly via an inline parser (no dependency on `index.o`) to allow `test_tree` to link without `index.o`
-- Sorts all index entries by path for deterministic hashing
-- Recursively groups entries by directory prefix using `write_tree_level`
-- For flat files: adds a blob `TreeEntry` directly
-- For subdirectories: groups all entries sharing the same path prefix, recurses one level deeper, then adds a directory `TreeEntry` pointing to the sub-tree hash
-- Serializes each tree level and writes it to the object store
-- Heap-allocates the `Index` struct to avoid stack overflow
+This phase focuses on building directory structure from staged files.
 
-**Also provided (already implemented):**
-- `tree_parse` — Deserializes binary tree data into a `Tree` struct
-- `tree_serialize` — Serializes a `Tree` struct to binary format, sorted by name
+* Converts flat index paths into hierarchical tree structure
+* Handles nested directories like `src/main.c`
+* Ensures entries are sorted to maintain consistent hashing
+* Uses recursion to build subdirectories
+* Writes tree objects into object store
 
-### Screenshot 2A — All Phase 2 Tests Passing
+Additional functions provided:
 
-![Screenshot 2A - test_tree passing](Screenshots/2A.jpeg)
+* `tree_parse` for reading tree data
+* `tree_serialize` for writing tree data
 
-### Screenshot 2B — Raw Binary Tree Object (xxd)
+### Screenshots
 
-![Screenshot 2B - xxd of tree object](Screenshots/2B.jpeg)
+* **2A:** Output of `test_tree`
+  <img width="832" height="178" alt="Test_object_p2_1" src="https://github.com/user-attachments/assets/3d42723a-6b09-4127-95e8-229356f45fe7" />
 
-The output shows the raw binary format:
-- `62 6c 6f 62` = ASCII `blob` (object type header)
-- `20 36` = space + size `6`
-- `00` = null byte separator
-- `68 65 6c 6c 6f 0a` = ASCII `hello\n` (actual file content)
+* **2B:** Raw tree object using `xxd`
+  <img width="1515" height="183" alt="Test_tree_p2_2" src="https://github.com/user-attachments/assets/6e90e3cd-36ea-4d00-980a-382be101f1c1" />
+
 
 ---
 
-## Phase 3 — The Index (Staging Area)
+## Phase 3 — Index (Staging Area)
 
-### What Was Implemented
+### Implementation Details
 
-**`index_load`** — Reads the text-based `.pes/index` file into an `Index` struct:
-- If the file doesn't exist, initializes an empty index (not an error — first run)
-- Parses each line in format: `<mode-octal> <64-hex-hash> <mtime_sec> <size> <path>`
-- Uses `sscanf` to extract all five fields per line
+The index acts as a staging layer before committing.
 
-**`index_save`** — Writes the index atomically:
-- Heap-allocates a sorted copy (avoids stack overflow — `Index` struct is several MB)
-- Sorts entries by path using `qsort` for consistent ordering
-- Writes to a temp file (`.pes/index.tmp`)
-- Calls `fsync` to ensure data reaches disk
-- Atomically renames temp file to `.pes/index`
+* **index_load**
 
-**`index_add`** — Stages a file:
-- Reads file contents into memory
-- Writes file as a blob object to the object store via `object_write`
-- Gets file metadata (`mode`, `mtime`, `size`) via `stat()`
-- Finds existing index entry or creates a new one
-- Updates the entry with new hash and metadata
-- Saves the updated index atomically
+  * Reads `.pes/index`
+  * Creates empty index if file doesn’t exist
+  * Parses entries using `sscanf`
 
-### Screenshot 3A — pes init → pes add → pes status
+* **index_save**
 
-![Screenshot 3A - pes add and status](Screenshots/3A.jpeg)
+  * Sorts entries before saving
+  * Uses atomic write (temp file → rename)
+  * Ensures data consistency using `fsync`
 
-### Screenshot 3B — cat .pes/index (Text Format Index)
+* **index_add**
 
-![Screenshot 3B - cat .pes/index](Screenshots/3b.jpeg)
+  * Reads file content
+  * Stores it as blob using `object_write`
+  * Updates or creates index entry
+  * Saves updated index
 
-The index file shows:
-- `100644` — file mode (regular, non-executable)
-- 64-character SHA-256 hex hash of each file's contents
-- Unix timestamp (`mtime_sec`) of last modification
-- File size in bytes
-- File path
+### Screenshots
+
+* **3A:** `pes init → pes add → pes status`
+  <img width="822" height="589" alt="Index_status_check" src="https://github.com/user-attachments/assets/ba41c3f2-008b-4754-92e2-ccf5d3f042ca" />
+
+* **3B:** Contents of `.pes/index`
+  <img width="951" height="79" alt="file_text_info_cat_pesindex" src="https://github.com/user-attachments/assets/3a4a70a5-f33a-40f3-bb86-514aa3fa261b" />
+
 
 ---
 
 ## Phase 4 — Commits and History
 
-### What Was Implemented
+### Implementation Details
 
-**`commit_create`** — The main commit function:
-1. Calls `tree_from_index()` to build a tree snapshot of the staged files
-2. Calls `head_read()` to get the current HEAD commit as parent (fails gracefully for first commit)
-3. Fills a `Commit` struct with tree hash, parent hash, author, timestamp, and message
-4. Serializes the commit to text format via `commit_serialize()`
-5. Writes the commit object to the object store via `object_write()`
-6. Updates HEAD atomically via `head_update()`
+This phase connects everything into a version history.
 
-**Also provided (already implemented):**
-- `commit_parse` — Parses raw commit text into a `Commit` struct
-- `commit_serialize` — Serializes a `Commit` struct to the commit text format
-- `commit_walk` — Walks commit history from HEAD, calling a callback per commit
-- `head_read` — Follows `HEAD → refs/heads/main → commit hash`
-- `head_update` — Atomically updates the branch file to point to new commit
+* **commit_create**
 
-### Screenshot 4A — pes log Output (Three Commits)
+  * Generates tree from index
+  * Reads previous commit as parent
+  * Stores author, timestamp, message
+  * Serializes commit data
+  * Writes commit object to storage
+  * Updates branch reference
 
-[Screenshot 4A — pes log Output](Screenshots/4A1.jpeg)
+Other helper functions:
 
-### Screenshot 4B — find .pes -type f | sort (Object Store Growth)
+* `commit_parse`
+* `commit_serialize`
+* `commit_walk`
+* `head_read`
+* `head_update`
 
-![Screenshot 4B - find .pes -type f sort](Screenshots/4A.jpeg)
+### Screenshots
 
-Shows 12 objects total after 3 commits:
-- 3 blob objects (file contents)
-- 3 tree objects (directory snapshots)
-- 3 commit objects
-- Plus `.pes/HEAD`, `.pes/index`, `.pes/refs/heads/main`
+* **4A:** Output of `pes log`
+  <img width="783" height="413" alt="word_commits_P4_1" src="https://github.com/user-attachments/assets/8e4f8d74-53b2-46c8-baac-325b787a5435" />
 
-### Screenshot 4C — Reference Chain
+* **4B:** Object files using `find .pes -type f`
+  <img width="931" height="298" alt="commit_object_growth_P4_2" src="https://github.com/user-attachments/assets/50531ff6-e64f-453d-a947-bc10ef1d037c" />
 
-![Screenshot 4C - cat HEAD and refs/heads/main](Screenshots/4B.jpeg)
+* **4C:** HEAD and branch reference files
+  <img width="930" height="92" alt="References_P4_3" src="https://github.com/user-attachments/assets/6a2fca90-808a-4305-8b02-92b15a8cd381" />
 
-- `cat .pes/refs/heads/main` → shows the latest commit hash
-- `cat .pes/HEAD` → shows `ref: refs/heads/main` (symbolic reference)
-
-### Final Integration Test
-
-![Integration Test Part 1](Screenshots/4C1.jpeg)
-
-![Integration Test Part 2](Screenshots/4C2.jpeg)
-
-All integration tests completed successfully ✅
 
 ---
+
+## Integration Test
+
+Final test was executed using:
+
+```bash
+make test-integration
+```
+<img width="714" height="994" alt="Intergration_test_p4_4" src="https://github.com/user-attachments/assets/d8f61c2e-58ec-4179-854d-ff4d60b0a5b1" />
+<img width="718" height="851" alt="Intergration_test_p4_5" src="https://github.com/user-attachments/assets/ff3160d0-8555-4a6f-8bc3-7dcef16f67dd" />
+
+
+
+All test cases executed successfully.
+
+---
+
+## Summary
+
+This project demonstrates how a basic version control system works internally:
+
+* Files are stored using hash-based addressing
+* Directory structure is handled through tree objects
+* Index acts as a staging layer
+* Commits create a linked history
+
+Overall, the implementation helped in understanding how systems like Git manage data efficiently.
+
 
 ## Phase 5 — Branching and Checkout Analysis
 
@@ -353,7 +352,7 @@ The blob was written but not yet referenced by any commit at the time GC ran. GC
 ### File Structure
 
 ```
-PES1UG24CS341-pes-vcs/
+PES1UG24CS367-PES-VCS/
 ├── object.c        ← Phase 1: Content-addressable object store
 ├── tree.c          ← Phase 2: Tree serialization and construction  
 ├── index.c         ← Phase 3: Staging area implementation
