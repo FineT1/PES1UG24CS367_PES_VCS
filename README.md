@@ -1,9 +1,9 @@
 # PES-VCS: Version Control System from Scratch
 
-**Student Name:** Prathamesh Singh  
-**SRN:** PES1UG24CS341  
-**Repository:** PES1UG24CS341-pes-vcs  
-**Platform:** Ubuntu 22.04
+**Student Name:**  RAMITH M R 
+**SRN:**  PES1UG24CS367
+**Repository:** PES1UG24CS367-PES-VCS  
+**Platform:**  Ubuntu 22.04
 
 ---
 
